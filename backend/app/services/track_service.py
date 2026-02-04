@@ -1,48 +1,44 @@
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Dict, List
-from uuid import uuid4
+from typing import List
+from fastapi import HTTPException
 
-from app.schemas.track import TrackCreate, TrackOut, TrackUpdate
+from app.core.supabase_client import get_supabase
+from app.schemas.track import TrackCreate, TrackOut
 
-# In-memory DB (temporary)
-_TRACKS: Dict[str, TrackOut] = {}
+
+TABLE = "tracks"
 
 
 def list_tracks() -> List[TrackOut]:
-    # newest first
-    return sorted(_TRACKS.values(), key=lambda t: t.created_at, reverse=True)
+    supabase = get_supabase()
 
+    response = (
+        supabase.table(TABLE)
+        .select("*")
+        .order("created_at", desc=True)
+        .execute()
+    )
 
-def get_track(track_id: str) -> TrackOut | None:
-    return _TRACKS.get(track_id)
+    # response.data is typically a list of dict rows
+    if response.data is None:
+        return []
+
+    return [TrackOut.model_validate(row) for row in response.data]
 
 
 def create_track(payload: TrackCreate) -> TrackOut:
-    track_id = str(uuid4())
-    track = TrackOut(
-        id=track_id,
-        created_at=datetime.utcnow(),
-        **payload.model_dump(),
+    supabase = get_supabase()
+
+    response = (
+        supabase.table(TABLE)
+        .insert(payload.model_dump(mode="json"))
+        .execute()
     )
-    _TRACKS[track_id] = track
-    return track
 
+    if not response.data:
+        raise HTTPException(status_code=500, detail="Insert failed")
 
-def update_track(track_id: str, payload: TrackUpdate) -> TrackOut | None:
-    existing = _TRACKS.get(track_id)
-    if not existing:
-        return None
+    # Supabase returns inserted rows
+    return TrackOut.model_validate(response.data[0])
 
-    data = existing.model_dump()
-    updates = payload.model_dump(exclude_unset=True)
-
-    data.update(updates)
-    updated = TrackOut(**data)
-    _TRACKS[track_id] = updated
-    return updated
-
-
-def delete_track(track_id: str) -> bool:
-    return _TRACKS.pop(track_id, None) is not None
